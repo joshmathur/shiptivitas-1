@@ -13,10 +13,9 @@ const STATUS_BY_LANE = {
 export default class Board extends React.Component {
   constructor(props) {
   super(props);
-  const clients = this.getClients().map(client => ({ ...client, status: 'backlog' }));
   this.state = {
     clients: {
-      backlog: clients,
+      backlog: [],
       inProgress: [],
       complete: [],
     }
@@ -36,6 +35,18 @@ componentDidMount() {
   ];
   this.drake = Dragula(containers);
 
+  fetch('http://localhost:3001/api/v1/clients')
+  .then(res => res.json())
+  .then(data => {
+    this.setState({
+      clients: {
+        backlog: data.filter(c => c.status === 'backlog').sort((a, b) => a.priority - b.priority),
+        inProgress: data.filter(c => c.status === 'in-progress').sort((a, b) => a.priority - b.priority),
+        complete: data.filter(c => c.status === 'complete').sort((a, b) => a.priority - b.priority),
+      }
+    });
+  })
+  .catch(err => console.error('Failed to fetch clients:', err));
   let originalNextSibling = null;
 
   this.drake.on('drag', (el) => {
@@ -43,10 +54,10 @@ componentDidMount() {
   });
 
   this.drake.on('drop', (el, target, source, sibling) => {
-    const id = el.dataset.id;
+    const id = parseInt(el.dataset.id, 10);
     const targetLane = this.getLaneFromContainer(target);
     const sourceLane = this.getLaneFromContainer(source);
-    const siblingId = sibling ? sibling.dataset.id : null;
+    const siblingId = sibling ? parseInt(sibling.dataset.id, 10) : null;
 
     if (originalNextSibling) {
       source.insertBefore(el, originalNextSibling);
@@ -71,6 +82,8 @@ componentWillUnmount() {
 
 moveClient(id, sourceLane, targetLane, siblingId) {
   if (!sourceLane || !targetLane) return;
+  let newStatus;
+  let newPriority;
   this.setState(prevState => {
     const clients = { ...prevState.clients };
     const sourceList = [...clients[sourceLane]];
@@ -79,8 +92,8 @@ moveClient(id, sourceLane, targetLane, siblingId) {
     const idx = sourceList.findIndex(client => client.id === id);
     if (idx === -1) return null;
     const [client] = sourceList.splice(idx, 1);
-    const movedClient = { ...client, status: STATUS_BY_LANE[targetLane] };
-
+    newStatus = STATUS_BY_LANE[targetLane];
+    const movedClient = { ...client, status: newStatus };
     let insertIdx = targetList.length;
     if (siblingId) {
       const siblingIdx = targetList.findIndex(c => c.id === siblingId);
@@ -90,8 +103,15 @@ moveClient(id, sourceLane, targetLane, siblingId) {
 
     clients[sourceLane] = sourceList;
     clients[targetLane] = targetList;
+    newPriority = insertIdx + 1;
 
     return { clients };
+  }, () => {
+    fetch(`http://localhost:3001/api/v1/clients/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus, priority: newPriority }),
+    }).catch(err => console.error('Failed to update client:', err));
   });
 }
   getClients() {
